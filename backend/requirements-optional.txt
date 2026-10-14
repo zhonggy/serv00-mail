@@ -1,0 +1,5 @@
+# 可选依赖：需要 Rust 编译，在 FreeBSD 等平台上可能安装失败。
+# bootstrap 会先装 requirements.txt，失败则中止；再尝试本文件，失败仅记录警告。
+# app/security.py 对两者都有纯 Python / stdlib 降级，缺包不影响运行。
+bcrypt>=4.1
+cryptography>=42.0

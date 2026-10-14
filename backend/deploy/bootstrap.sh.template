@@ -1,0 +1,85 @@
+#!/bin/sh
+# serv00 面板部署 bootstrap 模板。
+# 占位符由打包脚本替换为真实值（见 /tmp/make_zip.py），生成的文件含密钥，
+# 只存在于部署 zip 包和目标服务器上，不要提交到代码仓库。
+#
+# 使用方式（面板 Cron jobs 里添加，每分钟一次，幂等）：
+#   * * * * * sh /home/zgy/serv00-mail/backend/deploy/bootstrap.sh
+set -u
+
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PORT="__PORT__"
+FLAG="$APP_DIR/.deployed"
+LOCK="$APP_DIR/.bootstrap_running"
+LOG="$APP_DIR/bootstrap.log"
+ADMIN_PASSWORD="__ADMIN_PASSWORD__"
+
+# 已部署完成则直接退出
+[ -f "$FLAG" ] && exit 0
+# 服务已在跑（比如手动起的）也算完成
+if curl -fs --max-time 10 "http://127.0.0.1:${PORT}/health" > /dev/null 2>&1; then
+  touch "$FLAG"
+  exit 0
+fi
+# 防并发：锁文件 40 分钟内有效
+if [ -f "$LOCK" ]; then
+  now=$(date +%s)
+  mtime=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo 0)
+  [ $((now - mtime)) -lt 2400 ] && exit 0
+fi
+touch "$LOCK"
+echo "$(date '+%F %T') bootstrap start, HOME=$HOME" >> "$LOG"
+cd "$APP_DIR" || exit 1
+
+# ---- 写 .env（值在打包时填入） ----
+cat > .env << 'ENVEOF'
+APP_NAME=serv00-mail
+SECRET_KEY=__SECRET_KEY__
+ACCESS_TOKEN_EXPIRE_MINUTES=10080
+DATABASE_URL=__DB_URL__
+SERV00_IMAP_HOST=mail8.serv00.com
+SERV00_IMAP_PORT=993
+SERV00_SMTP_HOST=mail8.serv00.com
+SERV00_SMTP_PORT=587
+SERV00_SMTP_STARTTLS=true
+DEFAULT_DOMAIN=zgy.serv00.net
+MASTER_IMAP_USER=
+MASTER_IMAP_PASS=
+SERV00_PANEL_URL=https://panel8.serv00.com
+SERV00_PANEL_USER=zgy
+SERV00_PANEL_PASS=__PANEL_PASS__
+FERNET_KEY=__FERNET_KEY__
+DEFAULT_ALLOW_REGISTER=true
+DEFAULT_ALLOW_SEND=true
+MAILBOX_CREATE_LIMIT_PER_HOUR=20
+ENVEOF
+chmod 600 .env
+echo "$(date '+%F %T') .env written" >> "$LOG"
+
+# ---- 装依赖 ----
+if ! python3 -m pip --version >> "$LOG" 2>&1; then
+  python3 -m ensurepip --user >> "$LOG" 2>&1 || {
+    echo "$(date '+%F %T') pip 不可用" >> "$LOG"; rm -f "$LOCK"; exit 1; }
+fi
+python3 -m pip install --user -q -r requirements.txt >> "$LOG" 2>&1 || {
+  echo "$(date '+%F %T') pip install requirements.txt 失败" >> "$LOG"
+  rm -f "$LOCK"; exit 1; }
+python3 -m pip install --user -q -r requirements-optional.txt >> "$LOG" 2>&1 || {
+  echo "$(date '+%F %T') 可选依赖安装失败（bcrypt/cryptography，将降级运行）" >> "$LOG"; }
+
+# ---- 初始化数据库 ----
+ADMIN_USERNAME=admin ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+  python3 scripts/init_db.py >> "$LOG" 2>&1 || {
+  echo "$(date '+%F %T') init_db 失败" >> "$LOG"; rm -f "$LOCK"; exit 1; }
+
+# ---- 启动服务 ----
+nohup python3 -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" \
+  >> app.log 2>&1 &
+sleep 8
+if curl -fs --max-time 10 "http://127.0.0.1:${PORT}/health" > /dev/null 2>&1; then
+  echo "$(date '+%F %T') bootstrap done, service healthy" >> "$LOG"
+  touch "$FLAG"
+else
+  echo "$(date '+%F %T') 服务未就绪，下次 cron 重试" >> "$LOG"
+fi
+rm -f "$LOCK"

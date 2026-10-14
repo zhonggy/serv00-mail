@@ -1,0 +1,20 @@
+# 部署产物（tar 包只用于临时部署，不进仓库）
+deploy/*.tar.gz
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Node / 前端构建
+node_modules/
+frontend/dist/
+frontend/.env.local
+dist/
+
+# 系统
+.DS_Store
+*.log

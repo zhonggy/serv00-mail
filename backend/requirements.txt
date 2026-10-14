@@ -1,0 +1,11 @@
+# 核心依赖：纯 Python 或主流平台均有 wheel，FreeBSD 上一般可直接安装
+fastapi>=0.110
+uvicorn>=0.29
+sqlalchemy>=2.0
+pymysql>=1.1
+pydantic>=2.6
+pydantic-settings>=2.2
+pyjwt>=2.8
+requests>=2.31
+beautifulsoup4>=4.12
+python-multipart>=0.0.9
